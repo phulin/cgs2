@@ -74,6 +74,25 @@ export interface VectorWorkflowParams {
 	batchSize?: number;
 }
 
+export interface SearchExportWorkflowParams {
+	force?: boolean;
+	sourceId?: string;
+	sourceVersionId?: string;
+	batchSize?: number;
+}
+
+export interface SearchExportWorkflowResult {
+	sourceId: string;
+	sourceVersionId: string;
+	exportedDocuments: number;
+	expectedDocuments: number;
+	exportKey: string | null;
+	manifestKey: string | null;
+	notified: boolean;
+	skipped: boolean;
+	reason: string | null;
+}
+
 export type IngestSourceCode = string;
 
 export interface Env {
@@ -87,6 +106,14 @@ export interface Env {
 	GOVINFO_API_KEY: string;
 	CALLBACK_SECRET: string;
 	VECTOR_WORKFLOW: Workflow<VectorWorkflowParams>;
+	SEARCH_EXPORT_WORKFLOW: Workflow<SearchExportWorkflowParams>;
+	QUICKWIT_INDEXER_URL?: string;
+	QUICKWIT_WEBHOOK_SECRET?: string;
+	QUICKWIT_EXPORT_URL_TTL_SECONDS?: string;
+	R2_ACCOUNT_ID?: string;
+	R2_ACCESS_KEY_ID?: string;
+	R2_SECRET_ACCESS_KEY?: string;
+	SEARCH_EXPORT_R2_BUCKET?: string;
 	// CGA/MGL adapters (unhooked from worker, kept for future use)
 	GODADDY_CA: Fetcher;
 	CGA_BASE_URL: string;

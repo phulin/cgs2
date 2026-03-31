@@ -47,8 +47,14 @@ name = "vector-ingest-workflow"
 binding = "VECTOR_WORKFLOW"
 class_name = "VectorIngestWorkflow"
 
+[[workflows]]
+name = "search-export-workflow"
+binding = "SEARCH_EXPORT_WORKFLOW"
+class_name = "SearchExportWorkflow"
+
 [vars]
 USC_DOWNLOAD_BASE = "https://uscode.house.gov/download/releasepoints"
+SEARCH_EXPORT_R2_BUCKET = "fastlaw-content"
 
 [observability]
 enabled = true
@@ -107,5 +113,11 @@ name = "vector-ingest-workflow"
 binding = "VECTOR_WORKFLOW"
 class_name = "VectorIngestWorkflow"
 
+[[env.production.workflows]]
+name = "search-export-workflow"
+binding = "SEARCH_EXPORT_WORKFLOW"
+class_name = "SearchExportWorkflow"
+
 [env.production.vars]
 USC_DOWNLOAD_BASE = "https://uscode.house.gov/download/releasepoints"
+SEARCH_EXPORT_R2_BUCKET = "fastlaw-content"

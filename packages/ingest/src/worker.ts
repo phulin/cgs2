@@ -18,6 +18,7 @@ import {
 import { hash64, hash64ToHex } from "./lib/packfile/hash";
 import { PackfileDO } from "./lib/packfile-do";
 import { getSourceConfig, validateSourceCode } from "./lib/sources-config";
+import { SearchExportWorkflow } from "./lib/search/workflow";
 import { VectorIngestWorkflow } from "./lib/vector/workflow";
 import {
 	computeDiff,
@@ -30,6 +31,7 @@ import type {
 	IngestNode,
 	NodeMeta,
 	NodePayload,
+	SearchExportWorkflowParams,
 	VectorWorkflowParams,
 } from "./types";
 
@@ -202,12 +204,48 @@ const TERMINAL_JOB_STATUSES = new Set([
 	"aborted",
 ]);
 
+function isSearchExportConfigured(env: Env): boolean {
+	return Boolean(
+		env.SEARCH_EXPORT_WORKFLOW &&
+			env.QUICKWIT_INDEXER_URL &&
+			env.QUICKWIT_WEBHOOK_SECRET &&
+			env.R2_ACCOUNT_ID &&
+			env.R2_ACCESS_KEY_ID &&
+			env.R2_SECRET_ACCESS_KEY &&
+			env.SEARCH_EXPORT_R2_BUCKET,
+	);
+}
+
 async function isJobAborted(db: D1Database, jobId: string): Promise<boolean> {
 	const row = await db
 		.prepare("SELECT status FROM ingest_jobs WHERE id = ?")
 		.bind(jobId)
 		.first<{ status: string }>();
 	return row?.status === "aborted";
+}
+
+async function maybeStartSearchExportWorkflow(args: {
+	env: Env;
+	sourceId: string;
+	sourceVersionId: string;
+	context: string;
+}): Promise<void> {
+	if (!isSearchExportConfigured(args.env)) {
+		console.log(
+			`[Worker] Search export skipped for ${args.context}: missing configuration.`,
+		);
+		return;
+	}
+
+	const instance = await args.env.SEARCH_EXPORT_WORKFLOW.create({
+		params: {
+			sourceId: args.sourceId,
+			sourceVersionId: args.sourceVersionId,
+		},
+	});
+	console.log(
+		`[Worker] Search export workflow started for ${args.context}. instanceId=${instance.id}`,
+	);
 }
 
 app.get("/api/ingest/jobs", async (c) => {
@@ -500,6 +538,22 @@ app.post("/api/callback/ensureSourceVersion", async (c) => {
 		return c.json({ error: String(err) }, 500);
 	}
 
+	if (units.length === 0) {
+		c.executionCtx.waitUntil(
+			maybeStartSearchExportWorkflow({
+				env: c.env,
+				sourceId,
+				sourceVersionId,
+				context: `sourceVersion=${sourceVersionId}`,
+			}).catch((error) => {
+				console.error(
+					`[Worker] Search export workflow start failed for ${sourceVersionId}:`,
+					error,
+				);
+			}),
+		);
+	}
+
 	return c.json({ ok: true });
 });
 
@@ -677,6 +731,32 @@ app.post("/api/callback/progress", async (c) => {
 		c.executionCtx.waitUntil(
 			packfileDO.flush(params.sourceId, params.sourceId),
 		);
+	}
+
+	if (status === "completed" || status === "skipped") {
+		const job = await c.env.DB.prepare(
+			`SELECT source_version_id, status
+			FROM ingest_jobs
+			WHERE id = ?`,
+		)
+			.bind(params.jobId)
+			.first<{ source_version_id: string | null; status: string }>();
+
+		if (job?.status === "completed" && job.source_version_id) {
+			c.executionCtx.waitUntil(
+				maybeStartSearchExportWorkflow({
+					env: c.env,
+					sourceId: params.sourceId,
+					sourceVersionId: job.source_version_id,
+					context: `job=${params.jobId}`,
+				}).catch((workflowError) => {
+					console.error(
+						`[Worker] Search export workflow start failed for job ${params.jobId}:`,
+						workflowError,
+					);
+				}),
+			);
+		}
 	}
 
 	return c.json({ ok: true });
@@ -1091,6 +1171,42 @@ app.get("/api/ingest/vector/workflow/:instanceId", async (c) => {
 	} catch (error) {
 		console.error("Vector workflow status failed:", error);
 		return c.json({ error: "Vector workflow status failed" }, 500);
+	}
+});
+
+// ──────────────────────────────────────────────────────────────
+// Search export workflow
+// ──────────────────────────────────────────────────────────────
+
+app.post("/api/ingest/search-export/workflow", async (c) => {
+	try {
+		const body = await c.req
+			.json<SearchExportWorkflowParams>()
+			.catch(() => ({}) as SearchExportWorkflowParams);
+		const instance = await c.env.SEARCH_EXPORT_WORKFLOW.create({
+			params: {
+				force: body.force,
+				sourceId: body.sourceId,
+				sourceVersionId: body.sourceVersionId,
+				batchSize: body.batchSize,
+			},
+		});
+		return c.json({ instanceId: instance.id, status: await instance.status() });
+	} catch (error) {
+		console.error("Search export workflow creation failed:", error);
+		return c.json({ error: "Search export workflow creation failed" }, 500);
+	}
+});
+
+app.get("/api/ingest/search-export/workflow/:instanceId", async (c) => {
+	try {
+		const instance = await c.env.SEARCH_EXPORT_WORKFLOW.get(
+			c.req.param("instanceId"),
+		);
+		return c.json({ instanceId: instance.id, status: await instance.status() });
+	} catch (error) {
+		console.error("Search export workflow status failed:", error);
+		return c.json({ error: "Search export workflow status failed" }, 500);
 	}
 });
 
